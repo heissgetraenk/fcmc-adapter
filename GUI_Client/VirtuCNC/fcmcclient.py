@@ -1,10 +1,15 @@
 import socket
 import sys
+import pickle
+from fcmcconfig import FCMCConfig as config
 
 #tcp info
 TCP_ADDRESS = 'localhost'
-TCP_PORT = 1243
+TCP_PORT = 1234
 HEADER_LENGTH = 10
+
+#CAD model configuration info
+CAD_CONFIG_PATH = 'fc_setup.json'
 
 class FCMCClient:
     '''TCP client to connect with FCMC server'''
@@ -19,8 +24,9 @@ class FCMCClient:
         #this is used to sync the server with the client
         self.client_socket.setblocking(False)
 
-        #variable to hold the position of the CAD model
-        self.cur_pos1 = 0
+        #Info of the FreeCAD model configuration
+        config_handler = config(CAD_CONFIG_PATH)
+        self.cad_config = config_handler.get_config()
 
         self.setup_complete = False
 
@@ -28,77 +34,164 @@ class FCMCClient:
             # wait for the server connection and the CAD configuration info before 
             # finishing the setup
             
+            #send info request
+            self._sendSCVRequest()
+
+            #receive info from server
             try:
-                message_header = self.client_socket.recv(HEADER_LENGTH)
+                message = self._recvMessage()
 
-                if not len(message_header):
-                    #nothing was received. server can't be reached.
-                    sys.exit()
+                #does the server answer?
+                if not message == "blocked!":
 
-                #figure out the length of the message
-                message_length = int(message_header.decode("utf-8").strip())
+                    #extract the objects
+                    objects = message['objects']
 
-                #receive the message body
-                message = self.client_socket.recv(message_length).decode("utf-8")
+                    #iterate through all objects
+                    for obj in objects:
+                        #get the geoAssigns of the current object
+                        geo_assigns = objects[obj]["geoAssign"]
                         
-                if(message):
-                    #the message contained something
-                    axis_info = message.split(",")
+                        #iterate through all geoAssigns of an object
+                        for geo in geo_assigns:
+                            #update cad_config with the received values
+                            self.cad_config['objects'][obj]['geoAssign'][geo]['value'] = geo_assigns[geo]["value"]
 
-                    #copy the current value of the FreeCAD constraint 
-                    #from the axis info message
-                    self.cur_pos1 = float(axis_info[2])
+                    #end of setup
                     self.setup_complete = True
-            
+
+                #remember the received message for the next client-server exchange
+                self.prev_msg = message
+
             except:
                 print("Error receiving setup message")
-            
-    def sendValue(self, value):
-        '''send a value to the FCMC server'''
+
+
+#-----------------------------------private methods-------------------------------------------
+
+
+    def _sendMessage(self, msg):
+        '''method to send a message to fcmc server'''
+        #serialize the data to be sent
+        myMsg = pickle.dumps(msg)
+
+        #encode the message header
+        msg_header = f"{len(myMsg) :< {HEADER_LENGTH}}".encode("utf-8")
+
+        #concatenate the header and the message body
+        full_msg = msg_header + myMsg
+
+        #send the message)
+        self.client_socket.send(full_msg)
+
+
+    def _recvMessage(self):
+        '''method to receive a message from fcmc server'''
         try:
-            message = value
+            #receive the fixed length header
+            message_header = self.client_socket.recv(HEADER_LENGTH)
 
-            if message:
-            #if the message isn't empty:
-                message = message.encode("utf-8")
-                message_header = f"{len(message) :< {HEADER_LENGTH}}".encode("utf-8")
-                
-                #send message
-                self.client_socket.send(message_header + message)
+            #figure out how long the message body will be
+            message_length = int(message_header.decode("utf-8").strip())
 
-        except Exception as e:
-            #server couldn't be reached
-            print(str(e))
-            sys.exit()
-  
+            #unpickle and return the message   
+            return pickle.loads(self.client_socket.recv(message_length))   
 
-    def recvCurrentPos(self):
-        '''receive the acknoledgement from FCMC server'''
-        try:
-            act_pos_header = self.client_socket.recv(HEADER_LENGTH)
         except:
-            #the server isn't sending: it's still busy
-            #exit the method by returning an invalid value 
-            return "blocked"
+            #something went wrong while receiving
+            return "blocked!"
 
-        #figure out the message length
-        act_pos_length = int(act_pos_header.decode("utf-8").strip())
 
-        #receive the message
-        act_pos = self.client_socket.recv(act_pos_length).decode("utf-8")
-
-        if (act_pos):
-            #acknowledgement received
-            return act_pos
-
+    def _sendSCVRequest(self):
+        '''request to server: Send Current Values (scv)''' 
+        #create a new object holding the kinematic configuration
+        scv_config_handler = config(CAD_CONFIG_PATH)
+        scv_dict = scv_config_handler.get_config()
         
-    def inital_pos(self):
-        '''getter for the initial constraint value'''
-        return self.cur_pos1
+        #add a property for the request type to the dictionary
+        scv_dict["type"] = "scv"
 
+        #send the request to the fcmc server
+        self._sendMessage(scv_dict)
+
+
+    def _sendUmrRequest(self):
+        '''request to server: Update Model Request (umr)'''
+        #create a new object holding the kinematic configuration
+        umr_config_handler = config(CAD_CONFIG_PATH)
+        umr_dict = umr_config_handler.get_config()
+
+        #get the current target values as stored in self.cad_config:
+        #iterate through all configured objects
+        for obj in self.cad_config['objects']:
+            
+            #iterate through all geoAssigns of the object
+            for geo in self.cad_config['objects'][obj]['geoAssign']:
+                #update umrDict with value from cad_config
+                umr_dict['objects'][obj]['geoAssign'][geo]['value'] = self.cad_config['objects'][obj]['geoAssign'][geo]['value']
+
+        #add a property for the request type to the dictionary
+        umr_dict['type'] = 'umr'
+
+        #send the request to the fcmc server
+        self._sendMessage(umr_dict)
+
+
+#-----------------------------------public methods-------------------------------------------
+
+
+    def axis_pos(self, geo_assign):
+        '''get a value of a FreeCAD object's geo_assign. 
+        Use this method to get at a geo axis position'''
+         #iterate through all configured objects
+        for obj in self.cad_config['objects']:
+            #does the objects possess the given geo axis?
+            if geo_assign in self.cad_config['objects'][obj]['geoAssign']:
+                #return with the value of the first occurence of the geo axis assign
+                return self.cad_config["objects"][obj]["geoAssign"][geo_assign]["value"]
+
+
+    def axis_list(self):
+        '''get a dict of the configured geo axes and a corresponding object name'''
+        #extract the configured objects
+        obj_list = self.cad_config['objects']
         
+        #initialise a list
+        geo_list = []
+
+        #iterate through all objects and their assigned geo_ax definition
+        for obj in obj_list:
+            #extract the geo axis assigns of the current object
+            geos = obj_list[obj]['geoAssign']
+            
+            #iterate through all geo axis assigns
+            for geo in geos:
+                #get only the first occurence of a geo axis
+                if not geo in geo_list:
+                    #add new geo_ax definitions to the list
+                    geo_list.append(geo)
+
+        return geo_list
 
 
+    def setGeoAxValue(self, geo, value):
+        '''update the values of a given geo axis in the config dictionary'''
+        #iterate through all configured objects
+        for obj in self.cad_config['objects']:
+            #does the objects possess the given geo axis?
+            if geo in self.cad_config['objects'][obj]['geoAssign']:
+                #update the value of the geo axis in that object
+                self.cad_config['objects'][obj]['geoAssign'][geo]['value'] = value
 
-
-
+    
+    def sendValuesToCAD(self):
+        '''method to send all values to the FreeCAD server'''
+        #is the server available?
+        if self.prev_msg == "blocked!":
+            pass
+        else:
+            #FCMC server ready to receive: send Update Model Request
+            self._sendUmrRequest()
+        
+        #check for acknowledgement from FCMC server
+        self.prev_msg = self._recvMessage()

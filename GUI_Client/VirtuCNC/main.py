@@ -1,5 +1,5 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QGridLayout, QPushButton, QSlider
+from PyQt5.QtWidgets import QApplication, QWidget, QGridLayout, QPushButton, QSlider, QLineEdit, QComboBox
 from PyQt5.QtWidgets import QLabel, QMainWindow, QWidget
 from PyQt5 import QtGui, QtCore
 from PyQt5.QtCore import QTimer, qDebug
@@ -19,7 +19,7 @@ class VirtuCNC(QMainWindow):
         super().__init__()
 
         #initialise current position value and target position value
-        self.target_pos1 = self.cur_pos1 = 0
+        self.target_pos = self.act_pos = 0
 
         #initial value of feed override slider
         self.fdovr_inital = 80
@@ -34,7 +34,23 @@ class VirtuCNC(QMainWindow):
         #feed stop = False allows values to be sent to FCMC server 
         self.fd_stop = False
 
+        #dictionary to house list of setup info by axis label
+        self.axis_setup = {}
+
         self.initUI()
+
+    
+    def updateCAD(self, tar_pos):
+        '''handling method to update target positions in FCMC Adapter object 
+        and trigger mechanism to update server'''
+        #write the target position of the currently selected geo axis to fcmc
+        self.fcmc.setGeoAxValue(self.axis_sel.currentText(), tar_pos)
+        
+        #transmit all geo axis values in fcmc client to the fcmc server
+        self.fcmc.sendValuesToCAD()
+
+        #display new position value in GUI
+        self.pos.setText(str(tar_pos))
     
 
     def countUp(self):
@@ -42,17 +58,10 @@ class VirtuCNC(QMainWindow):
         if not self.fd_stop:
             #feed override slider > 0
             #increment target position value
-            self.target_pos1 += 1
+            self.target_pos += 1
 
-            #display new position value in GUI
-            self.pos1.setText(str(self.target_pos1))
-
-            if (self.cur_pos1 != "blocked"):
-                #FCMC server ready to receive: send new value
-                self.fcmc.sendValue(str(self.target_pos1))
-
-            #check for acknowledgement from FCMC server
-            self.cur_pos1 = self.fcmc.recvCurrentPos()
+            #call the mechanism to update the FreeCAD model 
+            self.updateCAD(self.target_pos)
 
 
     def countDown(self):
@@ -60,17 +69,10 @@ class VirtuCNC(QMainWindow):
         if not self.fd_stop:
             #changes to positon value enabled
             #decrement target position value
-            self.target_pos1 -= 1
+            self.target_pos -= 1
 
-            #display new position value in GUI
-            self.pos1.setText(str(self.target_pos1))
-
-            if (self.cur_pos1 != "blocked"):
-                #FCMC server ready to receive: send new value
-                self.fcmc.sendValue(str(self.target_pos1))
-
-            #check for acknowledgement from FCMC server
-            self.cur_pos1 = self.fcmc.recvCurrentPos()
+            #call the mechanism to update the FreeCAD model 
+            self.updateCAD(self.target_pos)
 
 
     def startTimer(self):
@@ -104,20 +106,24 @@ class VirtuCNC(QMainWindow):
 
     def connectFCMC(self):
         '''method to handle connection to FCMC server'''
-
         #initialise FCMC Client object
         self.fcmc = FCMCClient()
+
+        #get the list of geo axes
+        self.geo_axes = self.fcmc.axis_list()
         
-        #set target position value and current position value 
-        #to FCMC Client's inital value
-        self.target_pos1 = self.cur_pos1 = self.fcmc.inital_pos()
+        #initialise position value and label:
+        #by default initialize to the first geo axis that is listed in the config-file
+        first_geo = self.geo_axes[0]
+
+        #initialize target position and actual position
+        self.target_pos = self.act_pos = self.fcmc.axis_pos(first_geo)
         
         #setup and display Machine Control Panel Frame
         self.displayMCPFrame()
 
     def fdOvrChanged(self):
         '''slot to handle changes of the feed override slider'''
-
         #display new value of the slider
         self.fdovr_val.setText(str(self.feed_ovr1.value()) + "%")
 
@@ -146,6 +152,17 @@ class VirtuCNC(QMainWindow):
 
         #mapping onto output range
         return int(out_min + (value_scaled * out_span))
+
+    def setActualPosLabel(self):
+        '''sets the actual position label according to what is selected by the combo box'''
+        #get the corresponding geo axis and CAD object
+        geo = self.axis_sel.currentText()
+
+        #set target position value to the value of the selected axis
+        self.target_pos = self.fcmc.axis_pos(geo)
+
+        #set the actual pos display label
+        self.pos.setText(str(self.target_pos))
 
 
     def displayMCPFrame(self):
@@ -182,10 +199,22 @@ class VirtuCNC(QMainWindow):
             "*:hover{background: '#00ffff';}"
         )
 
+
+        #setup axis selection dropdown
+        self.axis_sel = QComboBox(self)
+        self.axis_sel.addItems(self.geo_axes)
+        self.axis_sel.setStyleSheet(
+            "border: 1px solid 'transparent';" +
+            "font-size: 35px;" +
+            "color: '#00ffff';" 
+        )
+        
+
+
         #setup label to display current positon/constraint value
-        self.pos1 = QLabel(str(self.cur_pos1))
-        self.pos1.setAlignment(QtCore.Qt.AlignCenter)
-        self.pos1.setStyleSheet(
+        self.pos = QLabel(str(self.act_pos))
+        self.pos.setAlignment(QtCore.Qt.AlignCenter)
+        self.pos.setStyleSheet(
             "font-size: 75px;" +
             "color: 'white';" +
             "padding: 20px 15px;" +
@@ -227,8 +256,9 @@ class VirtuCNC(QMainWindow):
 
         #add gui widgets to layout
         grid.addWidget(self.plus, 0, 0, 1, 5)
-        grid.addWidget(self.minus, 1, 0, 1, 5)       
-        grid.addWidget(self.pos1, 0, 5, 2, 5)
+        grid.addWidget(self.minus, 1, 0, 1, 5)
+        grid.addWidget(self.axis_sel, 0, 5, 1, 5)   
+        grid.addWidget(self.pos, 1, 5, 1, 5)
         grid.addWidget(self.feed_ovr1, 2, 0, 1, 9)
         grid.addWidget(self.fdovr_val, 2, 9, 1, 1)
 
@@ -241,6 +271,9 @@ class VirtuCNC(QMainWindow):
         #connect feed ovr slider's valueChanged signal to
         #to feed ovr changed slot
         self.feed_ovr1.valueChanged.connect(self.fdOvrChanged)
+
+        #connect comboBox to its slot
+        self.axis_sel.currentTextChanged.connect(self.setActualPosLabel)
 
         #apply layout to widget
         mcp_widget.setLayout(grid)
@@ -258,23 +291,23 @@ class VirtuCNC(QMainWindow):
         grid = QGridLayout()
 
         #setup connect button
-        self.connectBtn = QPushButton("Connect")
-        self.connectBtn.setCursor(QCursor(QtCore.Qt.PointingHandCursor))
-        self.connectBtn.setStyleSheet(
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.setCursor(QCursor(QtCore.Qt.PointingHandCursor))
+        self.connect_btn.setStyleSheet(
             "border: 4px solid '#00ffff';" +
             "border-radius: 45px;" +
             "font-size: 35px;" +
             "color: 'white';" +
             "padding: 25px 0;" +
-            "margin: 100px 200px}" +
+            "margin: 25px 200px}" +
             "*:hover{background: '#00ffff';}"
         )
 
         #add widget to layout
-        grid.addWidget(self.connectBtn, 0, 0)
+        grid.addWidget(self.connect_btn, 0, 0)
         
-        #connect button to FCMC connect method
-        self.connectBtn.clicked.connect(self.connectFCMC)
+        #connect signals to their slots
+        self.connect_btn.clicked.connect(self.connectFCMC)
 
         #apply layout to widget
         connectWidget.setLayout(grid)
@@ -291,8 +324,6 @@ class VirtuCNC(QMainWindow):
 
         #first frame to be displayed
         self.displayConnectFrame()
-
-        
 
 
 def main():
