@@ -2,13 +2,13 @@
 FreeCAD Motion Control Adapter
 
 The purpose of this project is to provide an interface for controlling FreeCAD objects.
-The client sends a value to the server, which uses it to update a constraint in the FreeCAD document.
 
-This project contains the following items:
+![fcmcadapterdemo](https://user-images.githubusercontent.com/104628764/179960008-6ca233bc-4d88-4108-a77e-e2affa21e470.gif)
+
+The project consists of the following:
+
 <ul>
-  <li>fcmc_server.py: A TCP server to run inside of FreeCAD</li>
-  <li>fcmcclient.py: A TCP Client that provides some mehtods to communicate with the server</li>
-  <li>main.py: An example application that uses the fcmc client to position values to FreeCAD</li>
-  <li>Some FreeCAD files to test on</li>
-<ul/>
-  
+  <li>A server to be run in FreeCAD as a Macro>/li>
+  <li>A client class to be utilized i.e. by a GUI application</li>
+  <li>An example GUI client</li>
+</ul>
