@@ -1,3 +1,4 @@
+from tkinter import Y
 import FreeCAD as App
 import FreeCADGui
 from PySide import QtGui
@@ -5,16 +6,18 @@ import select
 import socket
 import sys
 import pickle
+import math
 
 #tcp info
 TCP_ADDRESS = 'localhost'
 TCP_PORT = 1234
 HEADER_LENGTH = 10
 
+#rounding ceiling for actual values
+RND_PARAM = 3
+
 class FcmcServer:
-    '''FreeCAD Motion Control Server: TCP server that connects a custom tcp client with a FreeCAD Document. #
-    The server receives a position value, writes that value onto a constraint of a FreeCAD Master Sketch and
-    recomputes the model to display the changed position'''
+    '''FreeCAD Motion Control Server: TCP server that connects a custom tcp client with a FreeCAD Document'''
 
     def __init__(self, listen_address, listen_port):
         self.is_running = False
@@ -23,7 +26,6 @@ class FcmcServer:
         self.listen_address = listen_address
         self.listen_port = listen_port
         self.message_box = False
-        self.doc_name = ""
 
     def _terminate(self):
         '''terminate the server'''
@@ -82,111 +84,71 @@ class FcmcServer:
         if req_type == 'scv':            
         #handle scv request
             answ_dict = request
-
-            #get the name of the FreeCAD document
-            self.doc_name = request['fcDocName']
+            
+            #the type property is no longer required, delete it so it won't get sent back to the client
+            del answ_dict['type']
 
             #iterate through all configured objects
-            for obj in answ_dict['objects']:
+            for machAx in answ_dict:
                 #append actual values to the recv'd dict
-                answ_dict['objects'][obj]['geoAssign'] = self._getActValues(self.doc_name, obj,
-                                                                 answ_dict)
+                try:
+                    answ_dict[machAx] = self._getActValues(answ_dict[machAx])
+                except:
+                    pass
 
             #return updated dict
             return answ_dict
 
         elif req_type == 'umr':
         #handle umr request
-            self._updateCAD(self.doc_name, request)
+            del request['type']
+            self._updateCAD(request)
 
         
         
-    def _getActValues(self, doc, obj, config_dict):
-        '''get actual values from FreeCAD Document for a given object''' 
-        #extract the geo axis assigns from the configuration dictionary
-        updated_geo = geo_assigns = config_dict['objects'][obj]['geoAssign']
+    def _getActValues(self, axis_dict):
+        '''get actual values from FreeCAD Document for a given machine axis''' 
+        #extract relevant info for querying actual values from FreeCAD
+        doc = axis_dict['docName']
+        obj = axis_dict['object']
 
-        #iterate through all geoAssigns of the given object
-        for geo in geo_assigns:
+        #actual placement
+        axis_dict['placement']['x'] = round(App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Base.x, RND_PARAM)
+        axis_dict['placement']['y'] = round(App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Base.y, RND_PARAM)
+        axis_dict['placement']['z'] = round(App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Base.z, RND_PARAM)
 
-            if geo_assigns[geo]["type"] == "rotary":
-                #rotary type geo: get the sketch constraint value by ConstraintNo (move_prop_id)
-                move_prop_id = geo_assigns[geo]["movePropID"]
-                sketch_name = geo_assigns[geo]["sketch"]
-                #actual value from FreeCAD Document:
-                updated_geo[geo]["value"] = App.getDocument(doc).getObjectsByLabel(sketch_name)[0].getDatum(int(move_prop_id)).Value
+        #actual rotation
+        rad_angle = App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Rotation.Angle
+        axis_dict['rotation']['angle'] = round(rad_angle * 180 / math.pi, RND_PARAM)
+        axis_dict['rotation']['x'] = round(App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Rotation.Axis.x, RND_PARAM)
+        axis_dict['rotation']['y'] = round(App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Rotation.Axis.y, RND_PARAM)
+        axis_dict['rotation']['z'] = round(App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset.Rotation.Axis.z, RND_PARAM)
 
-            elif geo_assigns[geo]["type"] == "linear":
-                #linear type geo: get x, y or z component of Placement Vector from FreeCAD Document
-                if geo == "X":
-                    #actual position of object in X:
-                    updated_geo[geo]["value"] = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Base.x
-
-                elif geo == "Y":
-                    #actual position of object in Y:
-                    updated_geo[geo]["value"] = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Base.y
-
-                elif geo == "Z": 
-                    #actual position of object in Z:
-                    updated_geo[geo]["value"] = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Base.z    
-
-        return updated_geo      
+        return axis_dict     
 
 
-    def _updateCAD(self, doc, upd_dict):
+    def _updateCAD(self, upd_dict):
         '''method to interact with FreeCAD model'''
-        #extract objects from configuration
-        objects = upd_dict['objects']
-        
-        #iterate through all configured objects
-        for obj in objects:
-            #extract geo axis assignments for the given object
-            geo_assigns = objects[obj]['geoAssign']
-            
-            #iterate through all geoAssigns of the object
-            for geo in geo_assigns:
-                #value to update to
-                value = geo_assigns[geo]['value']
-                
-                #is the current geo axis assign of type "rotary"?
-                if geo_assigns[geo]["type"] == "rotary":
-                    #get the Constraint number (move_prop_id) responsible for the rotary movement
-                    move_prop_id = int(geo_assigns[geo]["movePropID"])
+        #iterate through all axes that need to be updated
+        for machAx in upd_dict:
+            #extract relevant info fo rupdating the values
+            doc = upd_dict[machAx]['docName']
+            obj = upd_dict[machAx]['object']
 
-                    #get the name of the sketch the constraint belongs to
-                    sketch_name = geo_assigns[geo]["sketch"]
+            #placement vector components
+            x = upd_dict[machAx]['placement']['x']
+            y = upd_dict[machAx]['placement']['y']
+            z = upd_dict[machAx]['placement']['z']
 
-                    #update the sketch constraint value
-                    App.getDocument(doc).getObjectsByLabel(sketch_name)[0].setDatum(move_prop_id, App.Units.Quantity(value))
+            #rotation vector components
+            rot_x = upd_dict[machAx]['rotation']['x']
+            rot_y = upd_dict[machAx]['rotation']['y']
+            rot_z = upd_dict[machAx]['rotation']['z']
+            angle = upd_dict[machAx]['rotation']['angle']
 
-                #is the current geo axis assign of type "linear"?
-                elif geo_assigns[geo]["type"] == "linear":
-                    #linear type geo: update x, y or z component of Placement Vector of FreeCAD Document, maintain rotation vector:
-                    
-                    #get the current rotation of the object
-                    angle = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Rotation.Angle
-                    rot_x = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Rotation.Axis.x
-                    rot_y = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Rotation.Axis.y
-                    rot_z = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Rotation.Axis.z
+            #update the axis values in the freecad document
+            App.getDocument(doc).getObjectsByLabel(obj)[0].AttachmentOffset = App.Placement(App.Vector(x,y,z),App.Rotation(App.Vector(rot_x, rot_y, rot_z), angle))
 
-                    #get the current placement of the object
-                    x = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Base.x
-                    y = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Base.y
-                    z = App.getDocument(doc).getObjectsByLabel(obj)[0].Placement.Base.z
-
-                    #update the vector component corresponding to the current geo axis assign
-                    if geo == "X":
-                        #update x position
-                        App.getDocument(doc).getObjectsByLabel(obj)[0].Placement = App.Placement(App.Vector(value,y,z),App.Rotation(App.Vector(rot_x, rot_y, rot_z), angle))
-
-                    elif geo == "Y":
-                        #update y position
-                        App.getDocument(doc).getObjectsByLabel(obj)[0].Placement = App.Placement(App.Vector(x,value,z),App.Rotation(App.Vector(rot_x, rot_y, rot_z), angle))
-
-                    elif geo == "Z":
-                        #update z position
-                        App.getDocument(doc).getObjectsByLabel(obj)[0].Placement = App.Placement(App.Vector(x,y,value),App.Rotation(App.Vector(rot_x, rot_y, rot_z), angle))
-                        
         #recompute the CAD model
         App.ActiveDocument.recompute()
 
@@ -221,14 +183,14 @@ class FcmcServer:
                 for s in readable:
                     
                     if s is self.input_socket:
-                        #this is the first communication between the server and the client
+                        #first communication between server and client
                         self.client_socket, address = self.input_socket.accept()
 
                         read_list.append(self.client_socket)
 
                         self.remote_address = address[0]
 
-                        #update message box to show the connection
+                        #update message box to show the connection state
                         if self.message_box:
                             self.message_box.setText("Connection established!")
 
@@ -250,7 +212,7 @@ class FcmcServer:
                         #all subsequent communication between server and client
                         
                         try:
-                        #receive a message
+                            #receive a message
                             message = self._recvMessage()
                             
                             if message is False:

@@ -1,7 +1,7 @@
 import json
 
 class FCMCConfig:
-    '''Helper class to handle the json settings file containing the info on the configuration of the CAD model'''
+    '''Class to handle the json settings file containing the info on the configuration of the CAD model'''
 
     def __init__(self, path):
 

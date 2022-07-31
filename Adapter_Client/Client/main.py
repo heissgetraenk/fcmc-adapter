@@ -5,6 +5,8 @@ from PyQt5 import QtGui, QtCore
 from PyQt5.QtCore import QTimer, qDebug
 from PyQt5.QtGui import QCursor
 from fcmcclient import FCMCClient
+from fcmcconfig import FCMCConfig as config
+from fcmckinematics import FCMCKinematics as kinematics
 
 #Mapping constants: feed override slider values --> timer duration in ms
 MAP_IN_MIN = 1
@@ -12,7 +14,10 @@ MAP_IN_MAX = 100
 MAP_OUT_MIN = 200
 MAP_OUT_MAX = 4
 
-class VirtuCNC(QMainWindow):
+#CAD model configuration info
+CAD_CONFIG_PATH = 'fc_kine_config_plotter.json'
+
+class ExampleGui(QMainWindow):
     '''PyQt GUI example using the FCMC client class'''
 
     def __init__(self):
@@ -43,10 +48,13 @@ class VirtuCNC(QMainWindow):
     def updateCAD(self, tar_pos):
         '''handling method to update target positions in FCMC Adapter object 
         and trigger mechanism to update server'''
-        #write the target position of the currently selected geo axis to fcmc
-        self.fcmc.setGeoAxValue(self.axis_sel.currentText(), tar_pos)
+        #set the current geometry axis target value in the configuration object
+        self.kine_handler.setGeoAxValue(self.axis_sel.currentText(), tar_pos)
         
-        #transmit all geo axis values in fcmc client to the fcmc server
+        #calculate the target machine axis values from the geometry axis values in the configuration object
+        self.kine_handler.calcAxValues("machAxes")
+
+        #send all machine axis values in the configuration object to the fcmc server
         self.fcmc.sendValuesToCAD()
 
         #display new position value in GUI
@@ -102,26 +110,40 @@ class VirtuCNC(QMainWindow):
 
         #disconnect slots
         self.timer.disconnect()
-
+        
 
     def connectFCMC(self):
         '''method to handle connection to FCMC server'''
-        #initialise FCMC Client object
-        self.fcmc = FCMCClient()
+        #initialise configuration object with path to the configuration file
+        self.fcmc_config_handler = config(CAD_CONFIG_PATH)
+        
+        #get the reference to the fcmc configuration object
+        self.cad_config = self.fcmc_config_handler.get_config()
+        
+        #initialise fcmc client object with configuration object reference as argument
+        self.fcmc = FCMCClient(self.cad_config)
 
-        #get the list of geo axes
-        self.geo_axes = self.fcmc.axis_list()
+        #initialise fcmc kinematics object with configuration object reference as argument
+        self.kine_handler = kinematics(self.cad_config)
+        
+        #calculate the geometry axis values to be displayed in the GUI 
+        #from the machine axi values reported by the fcmc server
+        self.kine_handler.calcAxValues("geoAxes")
+
+        #get the names of the geometry axes
+        self.geo_axes = list(self.kine_handler.axis_list())
         
         #initialise position value and label:
         #by default initialize to the first geo axis that is listed in the config-file
         first_geo = self.geo_axes[0]
 
         #initialize target position and actual position
-        self.target_pos = self.act_pos = self.fcmc.axis_pos(first_geo)
+        self.target_pos = self.act_pos = self.kine_handler.axis_pos(first_geo)
         
         #setup and display Machine Control Panel Frame
         self.displayMCPFrame()
 
+    
     def fdOvrChanged(self):
         '''slot to handle changes of the feed override slider'''
         #display new value of the slider
@@ -138,6 +160,7 @@ class VirtuCNC(QMainWindow):
             #enable changes to position value
             self.fd_stop = False
 
+    
     def mapValue(self, value, in_min, in_max, out_min, out_max):
         '''method to map a given value from an 
         input value range to an output value range'''
@@ -153,13 +176,14 @@ class VirtuCNC(QMainWindow):
         #mapping onto output range
         return int(out_min + (value_scaled * out_span))
 
+    
     def setActualPosLabel(self):
         '''sets the actual position label according to what is selected by the combo box'''
         #get the corresponding geo axis and CAD object
         geo = self.axis_sel.currentText()
 
         #set target position value to the value of the selected axis
-        self.target_pos = self.fcmc.axis_pos(geo)
+        self.target_pos = self.kine_handler.axis_pos(geo)
 
         #set the actual pos display label
         self.pos.setText(str(self.target_pos))
@@ -328,8 +352,8 @@ class VirtuCNC(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    cnc = VirtuCNC()
-    cnc.show()
+    gui = ExampleGui()
+    gui.show()
     sys.exit(app.exec_())
 
 

@@ -1,0 +1,98 @@
+{
+    "geoAxes": {
+        "X": {
+            "value": "0.0"
+        },
+        "Y": {
+            "value": "0.0"
+        },
+        "A": {
+            "value": "0.0"
+        }
+    },
+    "machAxes": {
+        "X1": {
+            "docName": "PlotterBeam",
+            "object": "LCS_Origin",
+            "placement": {
+                "x": "0.0",
+                "y": "0.0",
+                "z": "0.0"
+            },
+            "rotation": {
+                "x": "0.0",
+                "y": "0.0",
+                "z": "0.0",
+                "angle": "0.0"
+            }
+        },
+        "Y1": {
+            "docName": "PlotterSled",
+            "object": "LCS_1",
+            "placement": {
+                "x": "0.0",
+                "y": "0.0",
+                "z": "0.0"
+            },
+            "rotation": {
+                "x": "0.0",
+                "y": "0.0",
+                "z": "0.0",
+                "angle": "0.0"
+            }
+        },
+        "A1": {
+            "docName": "PlotterA",
+            "object": "LCS_1",
+            "placement": {
+                "x": "0.0",
+                "y": "0.0",
+                "z": "0.0"
+            },
+            "rotation": {
+                "x": "0.0",
+                "y": "0.0",
+                "z": "0.0",
+                "angle": "0.0"
+            }
+        }
+    },
+    "transformations": {
+        "X1": {
+            "placement": {
+                "x": {
+                    "factor": "-1.0",
+                    "source": ["geoAxes", "X", "value"]
+                }
+            }
+        },
+        "Y1": {
+            "placement": {
+                "z": {
+                    "factor": "1.0",
+                    "source": ["geoAxes", "Y", "value"]
+                }
+            }
+        },
+        "A1": {
+            "rotation": {
+                "angle": {
+                    "factor": "1.0",
+                    "source": ["geoAxes", "A", "value"]
+                }
+            }
+        },
+        "X": {
+            "factor": "-1.0",
+            "source": ["machAxes", "X1", "placement", "x"]
+        },
+        "Y": {
+            "factor": "1.0",
+            "source": ["machAxes", "Y1", "placement", "z"]
+        },
+        "A": {
+            "factor": "1.0",
+            "source": ["machAxes", "A1", "rotation", "angle"]
+        }
+    }
+}
