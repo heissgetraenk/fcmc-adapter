@@ -55,7 +55,7 @@ class ExampleGui(QMainWindow):
         self.kine_handler.calcAxValues("machAxes")
 
         #send all machine axis values in the configuration object to the fcmc server
-        self.fcmc.sendValuesToCAD()
+        self.fcmc.sendValuesToCAD(self.cad_config['machAxes'])
 
         #display new position value in GUI
         self.pos.setText(str(tar_pos))
@@ -121,7 +121,10 @@ class ExampleGui(QMainWindow):
         self.cad_config = self.fcmc_config_handler.get_config()
         
         #initialise fcmc client object with configuration object reference as argument
-        self.fcmc = FCMCClient(self.cad_config)
+        self.fcmc = FCMCClient()
+
+        #get actual machine axis values from fcmc server
+        self.cad_config['machAxes'] = self.fcmc.getActValues(self.cad_config['machAxes'])
 
         #initialise fcmc kinematics object with configuration object reference as argument
         self.kine_handler = kinematics(self.cad_config)
