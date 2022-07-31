@@ -8,7 +8,7 @@ The purpose of this project is to provide an interface for controlling FreeCAD o
 The project consists of the following:
 
 <ul>
-  <li>A server to be run in FreeCAD as a Macro>/li>
+  <li>A server to be run in FreeCAD as a Macro</li>
   <li>A client class to be utilized i.e. by a GUI application</li>
   <li>An example GUI client</li>
 </ul>
